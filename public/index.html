@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stranger call</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>Stranger call</h1>
+        <div class="button-container">
+            <button id="startCall">Start Call</button>
+          
+            <button id="changeCall" style="display: none;">Change Call</button>
+            <button id="endCall" style="display: none;">End Call</button>
+        </div>
+        <div class="video-container">
+            <div class="local-video-container">
+                <video id="localVideo" class="video local-video" autoplay muted></video>
+                <div class="video-controls">
+                    <button id="muteButton" class="control-button">🔊</button>
+                    <button id="hideVideoButton" class="control-button">📷</button>
+                </div>
+            </div>
+            <video id="remoteVideo" class="video remote-video" autoplay></video>
+        </div>
+        
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let localStream;
+        let peerConnection;
+        let targetId;
+        let connectedUsers = []; // Array to hold connected user IDs
+
+        const startCallButton = document.getElementById('startCall');
+        const changeCallButton = document.getElementById('changeCall');
+        const endCallButton = document.getElementById('endCall');
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const muteButton = document.getElementById('muteButton');
+        const hideVideoButton = document.getElementById('hideVideoButton');
+        const chatBox = document.getElementById('chatBox');
+        const messageInput = document.getElementById('messageInput');
+        const sendMessageButton = document.getElementById('sendMessageButton');
+
+        const configuration = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        };
+
+        // Listen for updates to the list of connected users
+        socket.on('update-users', (users) => {
+            connectedUsers = users; // Update the connected users array
+        });
+
+        startCallButton.onclick = async () => {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localVideo.srcObject = localStream;
+
+            // Create a new peer connection
+            peerConnection = new RTCPeerConnection(configuration);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            // Get a random user ID to call or the bot
+            targetId = getRandomTargetId();
+            console.log("Calling user:", targetId);
+
+            if (!targetId) {
+                alert("No users available to call.");
+                return;
+            }
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('ice-candidate', event.candidate, targetId);
+                }
+            };
+
+            peerConnection.ontrack = (event) => {
+                remoteVideo.srcObject = event.streams[0];
+            };
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit('offer', offer, targetId);
+
+            // Show/hide buttons
+            startCallButton.style.display = 'none';
+            changeCallButton.style.display = 'inline';
+            endCallButton.style.display = 'inline';
+        };
+
+        changeCallButton.onclick = async () => {
+            changeCallButton.classList.add('animate');
+            setTimeout(async () => {
+                if (peerConnection) {
+                    peerConnection.close();
+                }
+                startCallButton.onclick();
+            }, 500);
+        };
+
+        endCallButton.onclick = () => {
+            if (peerConnection) {
+                peerConnection.close();
+            }
+            localVideo.srcObject = null;
+            remoteVideo.srcObject = null;
+
+            // Show/hide buttons
+            startCallButton.style.display = 'inline';
+            changeCallButton.style.display = 'none';
+            endCallButton.style.display = 'none';
+        };
+
+        socket.on('offer', async (offer, callerId) => {
+            targetId = callerId; // Set the target ID to respond to the caller
+            peerConnection = new RTCPeerConnection(configuration);
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit('answer', answer, targetId);
+        });
+
+        socket.on('answer', (answer) => {
+            peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        });
+
+        socket.on('ice-candidate', (candidate) => {
+            peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        });
+
+        muteButton.onclick = () => {
+            const isMuted = localStream.getAudioTracks()[0].enabled;
+            localStream.getAudioTracks()[0].enabled = !isMuted;
+            muteButton.textContent = isMuted ? "🔇" : "🔊"; // Change icon
+        };
+
+        hideVideoButton.onclick = () => {
+            const isVideoHidden = localStream.getVideoTracks()[0].enabled;
+            localStream.getVideoTracks()[0].enabled = !isVideoHidden;
+            hideVideoButton.textContent = isVideoHidden ? "📹" : "👁️"; // Change icon
+        };
+
+        sendMessageButton.onclick = () => {
+            const message = messageInput.value;
+            if (message) {
+                socket.emit('chat-message', message);
+                messageInput.value = '';
+            }
+        };
+
+        socket.on('chat-message', (message) => {
+            const messageElement = document.createElement('div');
+            messageElement.textContent = message;
+            chatBox.appendChild(messageElement);
+            chatBox.scrollTop = chatBox.scrollHeight; // Scroll to bottom
+        });
+
+        function getRandomTargetId() {
+            const filteredIds = connectedUsers.filter(id => id !== socket.id);
+            return filteredIds.length > 0 ? filteredIds[Math.floor(Math.random() * filteredIds.length)] : 'bot_user';
+        }
+    </script>
+</body>
+</html>
