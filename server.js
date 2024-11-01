@@ -5,7 +5,7 @@ const socketIo = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
-
+res.sendFile(__dirname + '/index.html');
 app.use(express.static('public'));
 
 const users = {}; // Store connected users
